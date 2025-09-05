@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""
+Cluster authors into teams using ILP + PuLP, from commits.csv.
+"""
+
+import pandas as pd, numpy as np, pulp, argparse, math
+from sklearn.metrics.pairwise import cosine_similarity
+
+# -------- Parameters (edit here) --------
+CSV_FILE      = "commits.csv"
+SINCE_DAYS    = 730
+HALF_LIFE     = 180
+TOP_AUTHORS   = 15      # only consider this many authors (practicality)
+TOP_REPOS     = 25      # only consider this many repos (performance)
+REPO_NORM     = "idf"   # "none","colsum","idf"
+K             = 2       # clusters (2,3,4)
+MIN_SIZE      = 3   # minimum number of people on a team
+BAL_TOL       = 5   # allowed difference in people belonging to each cluster
+OUT_FILE      = "assignments.csv"
+# ----------------------------------------
+
+def build_matrix(df):
+    # Parse timestamps as UTC to avoid mixed tz issues
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+    df = df.dropna(subset=["timestamp"])
+
+    # Numeric columns
+    df["lines_added"] = pd.to_numeric(df["lines_added"], errors="coerce").fillna(0)
+    df["lines_removed"] = pd.to_numeric(df["lines_removed"], errors="coerce").fillna(0)
+
+    # Time filter (last SINCE_DAYS relative to max timestamp)
+    tmax = df["timestamp"].max()
+    cutoff = tmax - pd.Timedelta(days=SINCE_DAYS)
+    df = df[df["timestamp"] >= cutoff]
+    if df.empty:
+        raise SystemExit("No rows after time filter.")
+
+    # Recency decay (days, using total_seconds to stay tz-safe)
+    age_days = (tmax - df["timestamp"]).dt.total_seconds() / 86400.0
+    age_days = age_days.clip(lower=0)
+    decay = np.power(2.0, -age_days / float(HALF_LIFE))
+    df["w"] = (df["lines_added"].clip(lower=0) + df["lines_removed"].clip(lower=0)) * decay.to_numpy()
+
+    # Top authors/repos
+    A = df.groupby("author")["w"].sum().sort_values(ascending=False).head(TOP_AUTHORS).index.tolist()
+    R = df.groupby("repo")["w"].sum().sort_values(ascending=False).head(TOP_REPOS).index.tolist()
+    df = df[df["author"].isin(A) & df["repo"].isin(R)]
+    if df.empty:
+        raise SystemExit("No rows after top-k selection.")
+
+    # Author x Repo matrix
+    P = df.pivot_table(index="author", columns="repo", values="w", aggfunc="sum", fill_value=0.0)\
+         .reindex(index=A, columns=R, fill_value=0.0)
+    M = P.to_numpy(float)
+
+    # Repo downweighting
+    if REPO_NORM == "colsum":
+        M = M / (M.sum(axis=0, keepdims=True) + 1e-12)
+    elif REPO_NORM == "idf":
+        touched = (M > 0).sum(axis=0)
+        n = M.shape[0]
+        idf = np.log((1 + n) / (1 + touched)) + 1.0
+        M = M * idf
+
+    # Row L1 normalization
+    M = M / (M.sum(axis=1, keepdims=True) + 1e-12)
+    return P.index.tolist(), P.columns.tolist(), M
+
+
+def load_pairs(path):
+    if not path: return []
+    pairs=[]
+    for line in open(path,encoding="utf-8"):
+        line=line.strip()
+        if not line or line.startswith("#"): continue
+        a,b=[t.strip() for t in line.split(",")]
+        pairs.append((a,b))
+    return pairs
+
+def ilp_partition(authors,M,k,min_size,bal_tol,must_pairs,cannot_pairs):
+    n=len(authors); C=range(k); W=cosine_similarity(M)
+    prob=pulp.LpProblem("partition", pulp.LpMaximize)
+    x=pulp.LpVariable.dicts("x",(range(n),C),0,1,cat="Binary")
+    y={(i,j,c):pulp.LpVariable(f"y_{i}_{j}_{c}",0,1,cat="Binary") for i in range(n) for j in range(i+1,n) for c in C}
+
+    for i in range(n): prob+=pulp.lpSum(x[i][c] for c in C)==1
+    for (i,j,c),var in y.items():
+        prob+=var<=x[i][c]; prob+=var<=x[j][c]; prob+=var>=x[i][c]+x[j][c]-1
+
+    target=n/k; minc=max(min_size,int(math.floor(target-bal_tol))); maxc=max(minc,int(math.floor(target+bal_tol)))
+    for c in C:
+        prob+=pulp.lpSum(x[i][c] for i in range(n))>=minc
+        prob+=pulp.lpSum(x[i][c] for i in range(n))<=maxc
+
+    name2i={a:i for i,a in enumerate(authors)}
+    for a,b in must_pairs:
+        if a in name2i and b in name2i:
+            i,j=name2i[a],name2i[b]
+            for c in C: prob+=x[i][c]-x[j][c]==0
+    for a,b in cannot_pairs:
+        if a in name2i and b in name2i:
+            i,j=name2i[a],name2i[b]; 
+            if i>j:i,j=j,i
+            prob+=pulp.lpSum(y[(i,j,c)] for c in C)==0
+
+    prob+=pulp.lpSum(W[i,j]*y[(i,j,c)] for (i,j,c) in y)
+    prob.solve(pulp.PULP_CBC_CMD(msg=False))
+    labels=np.zeros(n,dtype=int)
+    for i in range(n):
+        for c in C:
+            if pulp.value(x[i][c])>0.5: labels[i]=c; break
+    return labels
+
+def main():
+    ap=argparse.ArgumentParser()
+    ap.add_argument("--must-link"); ap.add_argument("--cannot-link")
+    args=ap.parse_args()
+    df=pd.read_csv(CSV_FILE)
+    authors,repos,M=build_matrix(df)
+    must=load_pairs(args.must_link); cannot=load_pairs(args.cannot_link)
+    labels=ilp_partition(authors,M,K,MIN_SIZE,BAL_TOL,must,cannot)
+    out=pd.DataFrame({"author":authors,"cluster":labels})
+    out.to_csv(OUT_FILE,index=False)
+    print("Saved",OUT_FILE)
+    for c in sorted(set(labels)):
+        A=[a for a,i in zip(authors,labels) if i==c]
+        print(f"Cluster {c} ({len(A)}):",", ".join(A))
+
+if __name__=="__main__": main()
+

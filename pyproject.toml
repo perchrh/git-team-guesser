@@ -1,0 +1,15 @@
+[project]
+name = "team-partitioning"
+version = "0.1.0"
+description = "Extract git commit stats and partition authors into balanced clusters using PuLP"
+readme = "README.md"
+requires-python = ">=3.9"
+
+dependencies = [
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "pulp"
+]
+
+
