@@ -132,7 +132,12 @@ def main():
     authors, repos, M = build_matrix(df)
     must = load_pairs(args.must_link)
     cannot = load_pairs(args.cannot_link)
-    print(f"Created matrix and constraints. Targeting {K} clusters. Starting ILP...")
+
+    print(
+        f"Targeting {K} teams. Matrix shape (authors x repos): {M.shape}. "
+        f"Must-link: {len(must)}, "
+        f"Cannot-link: {len(cannot)}. "
+        f"Starting ILP computation...")
     labels = ilp_partition(authors, M, K, MIN_SIZE, MAX_SIZE, BAL_TOL, must, cannot)
     out = pd.DataFrame({"author": authors, "cluster": labels})
     out.to_csv(OUT_FILE, index=False)

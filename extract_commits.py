@@ -20,19 +20,19 @@ def _git_log(repo, since):
         return ""
 
 
-def _parse_numstat(stream, repo_name, filtered_authors, aliases):
+def _parse_numstat(stream, repo_name, ignored_authors, aliases):
     cur_author = None
     cur_date = None
     add_sum = 0
     del_sum = 0
     in_commit = False
     for line in stream.splitlines():
-        aliased_author = aliases[cur_author] if cur_author in aliases else cur_author
+        actual_author = aliases[cur_author] if cur_author in aliases else cur_author
         if not line.strip(): continue
         parts = line.split("\t")
         if len(parts) == 3 and ":" in parts[2]:  # header
-            if in_commit and cur_author not in filtered_authors and (add_sum + del_sum > 0):
-                yield {"timestamp": cur_date, "author": aliased_author,
+            if in_commit and actual_author not in ignored_authors and (add_sum + del_sum > 0):
+                yield {"timestamp": cur_date, "author": actual_author,
                        "lines_added": add_sum, "lines_removed": del_sum, "repo": repo_name}
             _, cur_author, cur_date = parts
             add_sum = 0
@@ -47,9 +47,9 @@ def _parse_numstat(stream, repo_name, filtered_authors, aliases):
                 a, d = 0, 0
             add_sum += a
             del_sum += d
-    aliased_author = aliases[cur_author] if cur_author in aliases else cur_author
-    if in_commit and cur_author not in filtered_authors and (add_sum + del_sum > 0):
-        yield {"timestamp": cur_date, "author": aliased_author,
+    actual_author = aliases[cur_author] if cur_author in aliases else cur_author
+    if in_commit and actual_author not in ignored_authors and (add_sum + del_sum > 0):
+        yield {"timestamp": cur_date, "author": actual_author,
                "lines_added": add_sum, "lines_removed": del_sum, "repo": repo_name}
 
 
