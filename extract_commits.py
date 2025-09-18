@@ -6,6 +6,7 @@ Columns: timestamp, author, lines_added, lines_removed, repo
 """
 
 import subprocess, sys, os, csv
+from typing import Any
 
 
 def _git_log(repo, since):
@@ -19,18 +20,19 @@ def _git_log(repo, since):
         return ""
 
 
-def _parse_numstat(stream, repo_name, filtered_authors):
+def _parse_numstat(stream, repo_name, filtered_authors, aliases):
     cur_author = None
     cur_date = None
     add_sum = 0
     del_sum = 0
     in_commit = False
     for line in stream.splitlines():
+        aliased_author = aliases[cur_author] if cur_author in aliases else cur_author
         if not line.strip(): continue
         parts = line.split("\t")
         if len(parts) == 3 and ":" in parts[2]:  # header
             if in_commit and cur_author not in filtered_authors and (add_sum + del_sum > 0):
-                yield {"timestamp": cur_date, "author": cur_author,
+                yield {"timestamp": cur_date, "author": aliased_author,
                        "lines_added": add_sum, "lines_removed": del_sum, "repo": repo_name}
             _, cur_author, cur_date = parts
             add_sum = 0
@@ -45,8 +47,9 @@ def _parse_numstat(stream, repo_name, filtered_authors):
                 a, d = 0, 0
             add_sum += a
             del_sum += d
+    aliased_author = aliases[cur_author] if cur_author in aliases else cur_author
     if in_commit and cur_author not in filtered_authors and (add_sum + del_sum > 0):
-        yield {"timestamp": cur_date, "author": cur_author,
+        yield {"timestamp": cur_date, "author": aliased_author,
                "lines_added": add_sum, "lines_removed": del_sum, "repo": repo_name}
 
 
@@ -68,7 +71,7 @@ def discover_repos(paths, max_depth=2):
         try:
             if has_git(path):
                 repos.add(os.path.abspath(path))
-                print("Found repo:", path)
+                print("Scanning repository:", path)
             if depth >= max_depth:
                 return
             for entry in os.scandir(path):
@@ -86,17 +89,16 @@ def discover_repos(paths, max_depth=2):
 
 
 def main():
-    ignore_authors = {"dependabot[bot]", "dependabot", "github-actions[bot]", "Team Aap",
-                      "AAP felles dependabot config sync", "gradle-update-robot", "Team Innbygger",
-                      "author"
-                      }
-
-    left_authors = {
-      # todo read from gone.txt
-    }
-    # TODO add aliases for author
-
-    filtered_authors = ignore_authors.union(left_authors)
+    ignore_authors = read_strings_from_file("ignore_authors.txt", "authors to ignore. One per line.")
+    author_aliases: dict[str, list[str]] = dict()
+    for author in read_strings_from_file("author_aliases.txt", "author aliases, separated by | on each line."):
+        aliases = author.split('|')
+        if len(aliases) > 1:
+            main_author = aliases[0]
+            for alias in aliases[1:]:
+                if alias not in author_aliases:
+                    author_aliases[alias] = []
+                author_aliases[alias].append(main_author)
 
     if len(sys.argv) < 2:
         sys.exit("Usage: extract_commits.py <repo_or_parent_dir> [...]")
@@ -105,13 +107,23 @@ def main():
     for repo in repos:
         name = os.path.basename(os.path.abspath(repo))
         raw = _git_log(repo, "2 years ago")
-        if raw: rows.extend(_parse_numstat(raw, name, filtered_authors))
+        if raw: rows.extend(_parse_numstat(raw, name, ignore_authors, author_aliases))
     if not rows: sys.exit("No commits found.")
     with open("commits.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=["timestamp", "author", "lines_added", "lines_removed", "repo"])
         w.writeheader()
         w.writerows(rows)
     print(f"Wrote commits.csv with {len(rows)} rows from {len(repos)} repos.")
+
+
+def read_strings_from_file(filename, description) -> list[str]:
+    try:
+        with open(filename) as f:
+            return [line.strip() for line in f if line.strip() and not line.lstrip().startswith("#")]
+    except FileNotFoundError:
+        print(f"[warn] File not found: {filename}, returning empty list.")
+        print(f"[warn] You can create this file to add {description}.")
+        return []
 
 
 if __name__ == "__main__":
