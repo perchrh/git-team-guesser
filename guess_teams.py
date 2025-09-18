@@ -8,8 +8,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 # -------- Parameters (edit here) --------
 CSV_FILE = "commits.csv"
-SINCE_DAYS = 730
-HALF_LIFE = 180
+SINCE_DAYS = 730  # ignore commits older than this
+HALF_LIFE = 180  # weigh down old commits
 TOP_AUTHORS = 25  # only consider this many authors (practicality)
 TOP_REPOS = 35  # only consider this many repos (performance)
 REPO_NORM = "idf"  # "none","colsum","idf"
