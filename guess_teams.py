@@ -11,14 +11,12 @@ CSV_FILE = "commits.csv"
 SINCE_DAYS = 730  # ignore commits older than this
 HALF_LIFE = 180  # weigh down old commits
 TOP_AUTHORS = 25  # only consider this many authors (practicality)
-TOP_REPOS = 35  # only consider this many repos (performance)
+TOP_REPOS = 32  # only consider this many repos (performance)
 REPO_NORM = "idf"  # "none","colsum","idf"
 K = 4  # clusters (2,3,4)
 MIN_SIZE = 3  # minimum number of people on a team
 MAX_SIZE = 8  # maximum number of people on a team
-BAL_TOL = 5  # allowed difference in people belonging to each cluster
 OUT_FILE = "assignments.csv"
-
 
 # ----------------------------------------
 
@@ -81,7 +79,7 @@ def load_pairs(path):
     return pairs
 
 
-def ilp_partition(authors, M, k, min_size, max_size, bal_tol, must_pairs, cannot_pairs):
+def ilp_partition(authors, M, k, min_size, max_size, must_pairs, cannot_pairs):
     n = len(authors)
     C = range(k)
     W = cosine_similarity(M)
@@ -96,9 +94,8 @@ def ilp_partition(authors, M, k, min_size, max_size, bal_tol, must_pairs, cannot
         prob += var <= x[j][c]
         prob += var >= x[i][c] + x[j][c] - 1
 
-    target = n / k
-    minc = max(min_size, int(math.floor(target - bal_tol)))
-    maxc = max(max(minc, int(math.floor(target + bal_tol))), max_size)
+    minc = min_size
+    maxc = max_size
     for c in C:
         prob += pulp.lpSum(x[i][c] for i in range(n)) <= maxc
         prob += pulp.lpSum(x[i][c] for i in range(n)) >= minc
@@ -120,7 +117,7 @@ def ilp_partition(authors, M, k, min_size, max_size, bal_tol, must_pairs, cannot
     for i in range(n):
         for c in C:
             if pulp.value(x[i][c]) > 0.5: labels[i] = c; break
-    return labels
+    return labels, pulp.value(prob.objective)
 
 
 def main():
@@ -138,13 +135,28 @@ def main():
         f"Must-link: {len(must)}, "
         f"Cannot-link: {len(cannot)}. "
         f"Starting ILP computation...")
-    labels = ilp_partition(authors, M, K, MIN_SIZE, MAX_SIZE, BAL_TOL, must, cannot)
+    labels, obj = ilp_partition(authors, M, K, MIN_SIZE, MAX_SIZE, must, cannot)
     out = pd.DataFrame({"author": authors, "cluster": labels})
     out.to_csv(OUT_FILE, index=False)
-    print("Saved", OUT_FILE)
     for c in sorted(set(labels)):
         A = [a for a, i in zip(authors, labels) if i == c]
         print(f"Cluster {c} ({len(A)}):", ", ".join(A))
+    print("Saved", OUT_FILE)
+
+def find_best_cluster_size(authors, M, k, must, cannot):
+    n = len(authors)
+    base_size = int(math.ceil(n / k))
+    best_labels = None
+    best_obj = float('-inf')
+    best_size = None
+
+    for size in range(base_size, base_size + 3):
+        labels, obj = ilp_partition(authors, M, k, size, size, must, cannot)
+        if obj > best_obj:
+            best_obj = obj
+            best_labels = labels
+            best_size = size
+    return best_labels, best_size, best_obj
 
 
 if __name__ == "__main__": main()
