@@ -90,15 +90,13 @@ def discover_repos(paths, max_depth=2):
 
 def main():
     ignore_authors = read_strings_from_file("ignore_authors.txt", "authors to ignore. One per line.")
-    author_aliases: dict[str, list[str]] = dict()
+    author_aliases: dict[str, str] = dict()
     for author in read_strings_from_file("author_aliases.txt", "author aliases, separated by | on each line."):
         aliases = author.split('|')
         if len(aliases) > 1:
             main_author = aliases[0]
             for alias in aliases[1:]:
-                if alias not in author_aliases:
-                    author_aliases[alias] = []
-                author_aliases[alias].append(main_author)
+                author_aliases[alias] = main_author
 
     if len(sys.argv) < 2:
         sys.exit("Usage: extract_commits.py <repo_or_parent_dir> [...]")
@@ -109,6 +107,7 @@ def main():
         raw = _git_log(repo, "2 years ago")
         if raw: rows.extend(_parse_numstat(raw, name, ignore_authors, author_aliases))
     if not rows: sys.exit("No commits found.")
+    print("Aggregating commits...")
     with open("commits.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=["timestamp", "author", "lines_added", "lines_removed", "repo"])
         w.writeheader()
