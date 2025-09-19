@@ -10,10 +10,10 @@ from sklearn.metrics.pairwise import cosine_similarity
 CSV_FILE = "commits.csv"
 SINCE_DAYS = 730  # ignore commits older than this
 HALF_LIFE = 180  # weigh down old commits
-TOP_AUTHORS = 25  # only consider this many authors (practicality)
-TOP_REPOS = 32  # only consider this many repos (performance)
+TOP_AUTHORS = 25  # only consider this many authors (performance)
+TOP_REPOS = 35  # only consider this many repos (performance)
 REPO_NORM = "idf"  # "none","colsum","idf"
-K = 4  # clusters (2,3,4)
+K = 3  # clusters (2,3,4)
 MIN_SIZE = 3  # minimum number of people on a team
 MAX_SIZE = 8  # maximum number of people on a team
 OUT_FILE = "assignments.csv"
