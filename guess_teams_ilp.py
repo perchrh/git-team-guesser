@@ -78,11 +78,14 @@ def load_pairs(path):
         pairs.append((a, b))
     return pairs
 
+from sklearn.metrics.pairwise import manhattan_distances, euclidean_distances
 
 def ilp_partition(authors, M, k, min_size, max_size, must_pairs, cannot_pairs):
     n = len(authors)
     C = range(k)
-    W = cosine_similarity(M)
+    #W = cosine_similarity(M)
+    #W = 1 / (1 + manhattan_distances(M))
+    W = 1 / (1 + euclidean_distances(M))
     prob = pulp.LpProblem("partition", pulp.LpMaximize)
     x = pulp.LpVariable.dicts("x", (range(n), C), 0, 1, cat="Binary")
     y = {(i, j, c): pulp.LpVariable(f"y_{i}_{j}_{c}", 0, 1, cat="Binary") for i in range(n) for j in range(i + 1, n) for
@@ -135,28 +138,34 @@ def main():
         f"Must-link: {len(must)}, "
         f"Cannot-link: {len(cannot)}. "
         f"Starting ILP computation...")
-    labels, obj = ilp_partition(authors, M, K, MIN_SIZE, MAX_SIZE, must, cannot)
+    labels, best_size, best_obj = find_best_cluster_count(authors, M, K, must, cannot)
     out = pd.DataFrame({"author": authors, "cluster": labels})
     out.to_csv(OUT_FILE, index=False)
     for c in sorted(set(labels)):
         A = [a for a, i in zip(authors, labels) if i == c]
-        print(f"Cluster {c} ({len(A)}):", ", ".join(A))
+        print(f"Cluster {c + 1} ({len(A)}):", ", ".join(A))
     print("Saved", OUT_FILE)
 
-def find_best_cluster_size(authors, M, k, must, cannot):
+
+def find_best_cluster_count(authors, M, k, must, cannot):
     n = len(authors)
-    base_size = int(math.ceil(n / k))
+    base_size = int(math.floor(n / k))
     best_labels = None
     best_obj = float('-inf')
-    best_size = None
+    best_cluster_count = None
 
-    for size in range(base_size, base_size + 3):
-        labels, obj = ilp_partition(authors, M, k, size, size, must, cannot)
-        if obj > best_obj:
+    for count in range(base_size - 1, base_size + 5):
+        print(f"Trying cluster count {count}...")
+        labels, obj = ilp_partition(authors, M, k, count, count, must, cannot)
+
+        counts = np.bincount(labels)
+        min_authors = np.min(counts)
+        cluster_count = np.unique(counts).size+1
+        if obj > best_obj and min_authors >= 3 and cluster_count >= 2:
             best_obj = obj
             best_labels = labels
-            best_size = size
-    return best_labels, best_size, best_obj
+            best_cluster_count = count
+    return best_labels, best_cluster_count, best_obj
 
 
 if __name__ == "__main__": main()
