@@ -8,7 +8,7 @@ df = pd.read_csv('commits.csv', parse_dates=['timestamp'])
 
 # 2. Time-decay weighting
 now = df['timestamp'].max()
-decay = lambda t: np.exp(-(now - t).days / 90)  # 1 month half-life
+decay = lambda t: np.exp(-(now - t).days / 90)  # 3 month half-life
 df['decay_weight'] = df['timestamp'].apply(decay)
 
 # 3. Weighted contribution: (lines_added + lines_removed) * decay

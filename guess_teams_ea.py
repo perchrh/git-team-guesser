@@ -9,7 +9,7 @@ df = pd.read_csv('commits.csv', parse_dates=['timestamp'])
 author_repos = df.groupby('author')['repo'].apply(set).to_dict()
 authors = list(author_repos.keys())
 n_authors = len(authors)
-n_clusters = 2  # or 2
+n_clusters = 3  # or 2
 
 import numpy as np
 
