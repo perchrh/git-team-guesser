@@ -6,8 +6,6 @@ Columns: timestamp, author, lines_added, lines_removed, repo
 """
 
 import subprocess, sys, os, csv
-from typing import Any
-
 
 def _git_log(repo, since):
     # Use %aI = author date, strict ISO 8601 with timezone (RFC3339)
@@ -27,11 +25,12 @@ def _parse_numstat(stream, repo_name, ignored_authors, aliases):
     del_sum = 0
     in_commit = False
     for line in stream.splitlines():
-        actual_author = aliases[cur_author] if cur_author in aliases else cur_author
         if not line.strip(): continue
         parts = line.split("\t")
         if len(parts) == 3 and ":" in parts[2]:  # header
-            if in_commit and actual_author not in ignored_authors and (add_sum + del_sum > 0):
+            actual_author = aliases[cur_author] if cur_author in aliases else cur_author
+            ignored_author = actual_author in ignored_authors or cur_author in ignored_authors
+            if in_commit and not ignored_author:
                 yield {"timestamp": cur_date, "author": actual_author,
                        "lines_added": add_sum, "lines_removed": del_sum, "repo": repo_name}
             _, cur_author, cur_date = parts
@@ -48,7 +47,8 @@ def _parse_numstat(stream, repo_name, ignored_authors, aliases):
             add_sum += a
             del_sum += d
     actual_author = aliases[cur_author] if cur_author in aliases else cur_author
-    if in_commit and actual_author not in ignored_authors and (add_sum + del_sum > 0):
+    ignored_author = actual_author in ignored_authors or cur_author in ignored_authors
+    if in_commit and not ignored_author:
         yield {"timestamp": cur_date, "author": actual_author,
                "lines_added": add_sum, "lines_removed": del_sum, "repo": repo_name}
 
@@ -89,7 +89,7 @@ def discover_repos(paths, max_depth=2):
 
 
 def main():
-    ignore_authors = read_strings_from_file("ignore_authors.txt", "authors to ignore. One per line.")
+    ignore_authors = read_strings_from_file("ignored_authors.txt", "authors to ignore. One per line.")
     author_aliases: dict[str, str] = dict()
     for author in read_strings_from_file("author_aliases.txt", "author aliases, separated by | on each line."):
         aliases = author.split('|')
@@ -99,7 +99,11 @@ def main():
                 author_aliases[alias] = main_author
 
     if len(sys.argv) < 2:
-        sys.exit("Usage: extract_commits.py <repo_or_parent_dir> [...]")
+        filename = sys.argv[0]
+        sys.exit(f"Usage: {filename} <repo_or_parent_dir> [...].\n"
+                 f"For example: {filename} dir-with-many-repos\n"
+                 f"or {filename} one-repo\n")
+
     repos = discover_repos(sys.argv[1:])
     rows = []
     for repo in repos:
