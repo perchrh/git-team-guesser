@@ -9,7 +9,7 @@ df = pd.read_csv('commits.csv', parse_dates=['timestamp'])
 author_repos = df.groupby('author')['repo'].apply(set).to_dict()
 authors = list(author_repos.keys())
 n_authors = len(authors)
-n_clusters = 3  # or 2
+n_clusters = 5  # or 2
 
 import numpy as np
 
@@ -35,6 +35,16 @@ author_repo_decay = df.groupby(['author', 'repo'])['commit_weight'].sum().unstac
 author_commit_counts = df['author'].value_counts().to_dict()
 penalty_lambda = 0.005  # Tune this parameter
 min_cluster_size = 3
+max_cluster_size = 8
+
+# Precompute shared repos for all author pairs
+author_shared_repos = {}
+for i, author1 in enumerate(authors):
+    for author2 in authors[i + 1:]:
+        shared_repos = set(author_repo_decay.columns[author_repo_decay.loc[author1] > 0]) & \
+                       set(author_repo_decay.columns[author_repo_decay.loc[author2] > 0])
+        author_shared_repos[(author1, author2)] = shared_repos
+
 
 def fitness(individual):
     clusters = [[] for _ in range(n_clusters)]
@@ -43,20 +53,21 @@ def fitness(individual):
     weighted_overlap = 0
     penalty = 0
     for cluster in clusters:
-        if len(cluster) < min_cluster_size:
-            return (float('inf'),) # infinite penalty for small clusters
+        # Penalize clusters that are too small (<=3) or too large (>8)
+        size = len(cluster)
+        if size < min_cluster_size or size > max_cluster_size:
+            penalty += 100000 # "infinity" penalty
+            continue
         for i in range(len(cluster)):
             for j in range(i + 1, len(cluster)):
-                a1, a2 = cluster[i], cluster[j]
+                author1, author2 = cluster[i], cluster[j]
                 # Overlap as before
-                shared_repos = set(author_repo_decay.columns[author_repo_decay.loc[a1] > 0]) & \
-                               set(author_repo_decay.columns[author_repo_decay.loc[a2] > 0])
+                shared_repos = author_shared_repos[(author1, author2)]
                 for repo in shared_repos:
-                    weighted_overlap += min(author_repo_decay.loc[a1, repo], author_repo_decay.loc[a2, repo])
+                    weighted_overlap += min(author_repo_decay.loc[author1, repo], author_repo_decay.loc[author2, repo])
                 # Penalize productive authors in same cluster
-                penalty += penalty_lambda * author_commit_counts[a1] * author_commit_counts[a2]
-    return (weighted_overlap + penalty,)
-
+                penalty += penalty_lambda * author_commit_counts[author1] * author_commit_counts[author2]
+    return (-weighted_overlap + penalty,)  # this is minimized
 
 
 # DEAP setup
@@ -79,6 +90,7 @@ algorithms.eaSimple(pop, toolbox, cxpb=0.5, mutpb=0.1, ngen=100, verbose=True)
 
 # Get best clustering
 best = tools.selBest(pop, 1)[0]
+print(f"Best fitness: {best.fitness.values[0]}")
 clusters = [[] for _ in range(n_clusters)]
 for idx, cluster_id in enumerate(best):
     clusters[cluster_id].append(authors[idx])
